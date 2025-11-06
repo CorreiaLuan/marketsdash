@@ -45,11 +45,11 @@ selected_asset = st.sidebar.selectbox(
     asset_names,
     index = 0
 )
-y_axis = ["taxa"]
+y_axis = "taxa"
 labels = {
     "vertice_du_years": "Vertice",
     "data_referencia": "Data",
-    "value":"Taxa"
+    "taxa":"Taxa"
 }
 if not curva_bool:
     
@@ -57,7 +57,7 @@ if not curva_bool:
     start_date, end_date = st.sidebar.date_input(
         "Selecione o Período:", 
         (
-            pd.to_datetime('2023-01-01'),
+            pd.to_datetime(df['data_referencia'].max()) - pd.DateOffset(years=1),
             df['data_referencia'].max()
         ),
         df['data_referencia'].min(),
@@ -68,12 +68,21 @@ if not curva_bool:
         (df["Ativo"] == selected_asset)
         & (df['data_referencia'] >= start_date)
         & (df['data_referencia'] <= end_date)
+        & (~df["taxa"].isna())
     ]
     index_keep = selected_data.groupby('vertice_du_years')['taxa'].sum()
     index_keep = index_keep[index_keep !=0].index
     selected_data = selected_data[
         (selected_data["vertice_du_years"].isin(index_keep))
     ]
+    selected_data.sort_values(["vertice_du","data_referencia"], inplace=True)
+    # break lines across long gaps by splitting into segments
+    selected_data["data_dt"] = pd.to_datetime(selected_data["data_referencia"])
+    _gap_days = selected_data.groupby("vertice_du")["data_dt"].diff().dt.days
+    _gap_flag = (_gap_days > 5).fillna(False)
+    selected_data["_seg"] = _gap_flag.astype(int)
+    selected_data["_seg"] = selected_data.groupby("vertice_du")["_seg"].cumsum()
+    selected_data["trace_id"] = selected_data["vertice_du"].astype(str) + "-" + selected_data["_seg"].astype(str)
     x_axis = "data_referencia"
     color = "vertice_du_years"
     mode = "lines"
@@ -106,6 +115,7 @@ fig = px.line(
     x = x_axis,
     y = y_axis,
     color = color,
+    line_group = ("trace_id" if not curva_bool else None),
     labels = labels,
     height = 650
 )
@@ -116,7 +126,7 @@ fig.update_layout(
     ,autosize=True
     ,margin=dict(l=0, r=0, t=0, b=0)
 )
-fig.update_traces(hovertemplate = "",mode = mode)
+fig.update_traces(hovertemplate = "",mode = mode, connectgaps=False)
 fig.update_xaxes(
     rangeselector = dict(
         buttons = list([
