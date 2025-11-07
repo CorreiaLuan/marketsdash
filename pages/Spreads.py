@@ -77,10 +77,13 @@ fig = px.line(
     y=["Spread","Spread_mean","Std1","Std_1"],
     facet_col="Codigo_Trava",
     facet_col_wrap=4,
-    facet_col_spacing=0.02,
+    facet_col_spacing=0.06,
     facet_row_spacing=0.1,
     height=800
 )
+
+# Unlink y-axes across facets so each subplot scales independently
+fig.update_yaxes(matches=None)
 
 for line in fig['data']:
     if line['legendgroup'] != 'Spread':
@@ -96,6 +99,8 @@ fig.for_each_annotation(
 )
 
 fig.for_each_xaxis(lambda x: x.update(showgrid=True,showticklabels=True))
+fig.for_each_yaxis(lambda y: y.update(showgrid=True,showticklabels=True))
+fig.for_each_yaxis(lambda y: y.update(title_text="Yield"))
 fig.update_layout(hovermode = "x")
 fig.update_traces(
     hovertemplate = "",

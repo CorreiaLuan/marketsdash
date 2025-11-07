@@ -3,6 +3,18 @@ import pandas as pd
 import pyodbc,sqlite3
 # import config
 from contextlib import contextmanager
+import time
+
+# Optional psycopg2 imports for connectivity-aware retries on Postgres
+try:
+    import psycopg2
+    from psycopg2 import OperationalError as PGOperationalError, InterfaceError as PGInterfaceError
+except Exception:  # pragma: no cover – environment without psycopg2
+    psycopg2 = None
+    class PGOperationalError(Exception):
+        pass
+    class PGInterfaceError(Exception):
+        pass
 
 class Db:
     def __init__(self, server=None, database=None, uid=None, pwd=None, access_path=None, sqlite_dbpath=None, driver=None,sslmode=None):
@@ -43,24 +55,51 @@ class Db:
         yield connection
         connection.close()
 
-    def execute(self, query: str, result=False, operation="operation", df=True):
+    def execute(self, query: str, result=False, operation="operation", df=True, retries:int=3, backoff_sec:float=0.8):
+        """Execute a SQL statement with optional retries for transient connectivity errors.
+
+        Parameters
+        - query: SQL to execute
+        - result: return result rows
+        - operation: label ('select', 'insert', ...)
+        - df: when returning results, format as pandas DataFrame if True
+        - retries: number of attempts for transient errors (Postgres only)
+        - backoff_sec: base seconds for exponential backoff
+        """
         if self.postgres and not query.endswith(";"):
             query = f"{query};"
-        with self.connect() as connection:
-            cursor = connection.cursor()
-            cursor.execute(query)
-            if operation != "select":
-                connection.commit()
-            if result:
-                try:
-                    if not df:
-                        return cursor.fetchall()
-                    rows = cursor.fetchall()
-                    column_names = [desc[0] for desc in cursor.description]
-                    return pd.DataFrame(rows, columns=column_names)
-                except Exception as e:
-                    print(f"Error fetching results: {e}")
+
+        attempt = 0
+        while True:
+            try:
+                with self.connect() as connection:
+                    cursor = connection.cursor()
+                    cursor.execute(query)
+                    if operation != "select":
+                        connection.commit()
+                    if result:
+                        try:
+                            if not df:
+                                return cursor.fetchall()
+                            rows = cursor.fetchall()
+                            column_names = [desc[0] for desc in cursor.description]
+                            return pd.DataFrame(rows, columns=column_names)
+                        except Exception as e:
+                            print(f"Error fetching results: {e}")
+                            return None
                     return None
+            except (PGOperationalError, PGInterfaceError) as e:
+                # Only retry for Postgres connectivity-type errors
+                attempt += 1
+                if attempt >= retries:
+                    # Re-raise after exhausting retries so Streamlit can show the error
+                    raise
+                sleep_time = backoff_sec * (2 ** (attempt - 1))
+                time.sleep(sleep_time)
+                continue
+            except Exception:
+                # Non-transient or unknown errors – bubble up
+                raise
 
     def operation(self, query, operation, df=True):
         if operation == "select":
